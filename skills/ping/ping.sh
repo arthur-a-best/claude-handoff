@@ -79,13 +79,39 @@ print(json.dumps({"content": title, "embeds": [embed]}))
 ')
 
 RESP_FILE=$(mktemp 2>/dev/null || echo "/tmp/discord_resp.$$")
+
+# ?wait=true makes Discord return the created message JSON (200) instead of
+# acking with 204. We need that to capture the message ID — without it,
+# read.sh can't poll for reactions on the ping.
+WEBHOOK_URL_WITH_WAIT="${DISCORD_WEBHOOK_URL}?wait=true"
 HTTP_CODE=$(curl -sS -o "$RESP_FILE" -w "%{http_code}" \
-  -X POST "$DISCORD_WEBHOOK_URL" \
+  -X POST "$WEBHOOK_URL_WITH_WAIT" \
   -H "Content-Type: application/json" \
   --data-raw "$PAYLOAD")
 
-if [ "$HTTP_CODE" = "204" ]; then
-  echo "ping sent ($HTTP_CODE)"
+if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "204" ]; then
+  # Persist message ID so read.sh can poll for reactions later
+  if [ "$HTTP_CODE" = "200" ]; then
+    # Pipe via stdin (avoids /tmp path translation on Git Bash/Windows where
+    # python is native Windows and can't see MSYS-mapped Unix paths).
+    MSG_ID=$(cat "$RESP_FILE" | "$PYTHON" -c "
+import json, sys
+try:
+    print(json.load(sys.stdin).get('id', ''))
+except Exception:
+    pass
+" 2>/dev/null)
+    if [ -n "$MSG_ID" ]; then
+      STATE_DIR="${HOME}/.claude/state"
+      mkdir -p "$STATE_DIR" 2>/dev/null
+      echo "$MSG_ID" > "$STATE_DIR/last-ping-id" 2>/dev/null
+      echo "ping sent (HTTP $HTTP_CODE, message_id=$MSG_ID)"
+    else
+      echo "ping sent (HTTP $HTTP_CODE) but no message_id parsed"
+    fi
+  else
+    echo "ping sent ($HTTP_CODE — no body, reactions can't be read)"
+  fi
   rm -f "$RESP_FILE"
   exit 0
 elif [ "$HTTP_CODE" = "429" ]; then

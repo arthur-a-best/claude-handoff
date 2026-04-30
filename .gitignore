@@ -1,0 +1,15 @@
+# Claude Code workspace artifacts
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+
+# Tests / response
+/tmp/
+*.tmp
